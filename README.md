@@ -7,13 +7,16 @@
 
 ## About
 
-This repository implements a function-space version of diffusion probabilistic models ([paper](https://arxiv.org/abs/2302.07400)) using JAX and Flax.
+This repository implements the method proposed in [Score-based Diffusion Models in Function Space](https://arxiv.org/abs/2302.07400), i.e., 
+a function-space version of diffusion probabilistic models, using JAX and Flax.
 
 > [!IMPORTANT]  
 > The implementation does not strictly follow the original paper. Specifically, the U-net neural operator ([U-NO](https://arxiv.org/abs/2204.11127)) as well as the sampling are customized and simplified.
 > Our U-NO implementation just uses spectral convolutions for up- and down-sampling of input dimensions. 
-> We use the VP-parameterization of [DDPM](https://arxiv.org/abs/2006.11239); hence we don't use the score-matching loss in [NCSN](https://arxiv.org/pdf/1907.05600.pdf) but a conventional SSE. 
+> We use the VP-parameterization of [DDPM](https://arxiv.org/abs/2006.11239); hence we don't use the score-matching loss in [NCSN](https://arxiv.org/abs/1907.05600) but a conventional SSE. 
 > We consequently don't use Langevin dynamics for sampling, but the sampling proposed in DDPM.
+> 
+> If you find bugs, please open an issue and report them.
 
 ## Example usage
 
@@ -36,11 +39,10 @@ This samples 32x32-, 64x64- and 128x128-dimensional images and creates some figu
 
 ## Installation
 
-To install the latest GitHub <RELEASE>, just call the following on the
-command line:
+To install the latest GitHub <TAG>, just call the following on the command line:
 
 ```bash
-pip install git+https://github.com/dirmeier/ddo@<RELEASE>
+pip install git+https://github.com/dirmeier/ddo@<TAG>
 ```
 
 ## Author

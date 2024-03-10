@@ -1,4 +1,5 @@
 import jax
+import numpy as np
 from flax import linen as nn
 from jax import Array
 from jax import numpy as jnp
@@ -11,9 +12,8 @@ tfd = tfp.distributions
 class DenoisingDiffusionOperator(nn.Module):
     score_model: nn.Module
     alpha_schedule: Array
-    n_langevin_steps: int
 
-    def setup(self):
+    def setup(self):        
         self.n_diffusions = len(self.alpha_schedule)
         self._alphas = self.alpha_schedule
         self._betas = jnp.asarray(1.0 - self._alphas)
@@ -24,32 +24,35 @@ class DenoisingDiffusionOperator(nn.Module):
     def __call__(self, method="loss", **kwargs):
         return getattr(self, method)(**kwargs)
 
-    def loss(self, y_0, is_training):
+    def loss(self, y0, is_training):
         rng_key = self.make_rng("sample")
         time_key, rng_key = jr.split(rng_key)
-        times = jr.choice(
+        times = jr.randint(
             key=time_key,
-            a=self.n_diffusions,
-            shape=(y_0.shape[0],),
+            minval=1,
+            maxval=self.n_diffusions,
+            shape=(y0.shape[0],),
         )
 
         noise_key, rng_key = jr.split(rng_key)
-        noise = jax.random.normal(noise_key, y_0.shape)
-        y_t = self.q_pred_reparam(y_0, times, noise)
-        eps = self.score_model(y_t, times, is_training=is_training)
-        loss = jnp.sum(jnp.square(noise - eps), axis=[1, 2, 3])
+        noise = jax.random.normal(noise_key, y0.shape)
+        yt = self.q_pred_reparam(y0, times, noise)
+        eps = self.score_model(yt, times, is_training=is_training)
+        loss = jnp.sum(jnp.square(noise - eps), axis=range(1, yt.ndim))
 
         return loss
 
-    def q_pred_mean(self, y_0, t):
-        return self._sqrt_alphas_bar[t].reshape(-1, 1, 1, 1) * y_0
+    def q_pred_mean(self, y0, t):
+        shape = (-1,) + tuple(np.ones(y0.ndim - 1, dtype=np.int32).tolist())
+        return self._sqrt_alphas_bar[t].reshape(shape) * y0
 
-    def q_pred_reparam(self, y_0, t, noise):
-        mean = self.q_pred_mean(y_0, t)
-        scale = self._sqrt_1m_alphas_bar[t].reshape(-1, 1, 1, 1) * noise
+    def q_pred_reparam(self, y0, t, noise):
+        shape = (-1,) + tuple(np.ones(y0.ndim - 1, dtype=np.int32).tolist())
+        mean = self.q_pred_mean(y0, t)
+        scale = self._sqrt_1m_alphas_bar[t].reshape(shape) * noise
         return mean + scale
 
-    def sample(self, sample_shape=(32, 32, 32, 1)):
+    def sample(self, sample_shape=(32, 32, 32, 1), **kwargs):
         init_key, rng_key = jr.split(self.make_rng("sample"))
 
         yt = jr.normal(init_key, sample_shape)
@@ -64,3 +67,24 @@ class DenoisingDiffusionOperator(nn.Module):
             yt = yn + jnp.sqrt(self._betas[t]) * z
 
         return yt
+    
+
+    def sample_ddim(self, sample_shape=(32, 32, 32, 1), n=100, **kwargs):
+        init_key, rng_key = jr.split(self.make_rng("sample"))
+        timesteps = np.arange(0, self.n_diffusions, self.n_diffusions // n)        
+        yt = jr.normal(init_key, sample_shape)
+        for t in reversed(np.arange(1, n)):            
+            tprev, tcurr = timesteps[(t - 1):(t + 1)]
+            yt = self.denoise_ddim(jr.fold_in(rng_key, tcurr), yt, tcurr, tprev)                
+        return yt
+
+    def denoise_ddim(self, rng_key, yt, t, tprev):             
+        eps = self.score_model(
+            yt, jnp.full(yt.shape[0], t), is_training=False
+        )
+        lhs = (yt - eps * self._sqrt_1m_alphas_bar[t]) / self._sqrt_alphas_bar[t]
+        lhs = self._sqrt_alphas_bar[tprev] * lhs
+        rhs = self._sqrt_1m_alphas_bar[tprev] * eps
+        # we use the implicit version that uses sigma_t = 0.0
+        ytm1 = lhs + rhs
+        return ytm1

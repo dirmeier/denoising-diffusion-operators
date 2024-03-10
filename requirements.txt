@@ -3,3 +3,4 @@ matplotlib
 tensorflow
 tensorflow-datasets
 tfp-nightly[jax]
+wandb
