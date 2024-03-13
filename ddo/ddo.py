@@ -13,7 +13,7 @@ class DenoisingDiffusionOperator(nn.Module):
     score_model: nn.Module
     alpha_schedule: Array
 
-    def setup(self):        
+    def setup(self):
         self.n_diffusions = len(self.alpha_schedule)
         self._alphas = self.alpha_schedule
         self._betas = jnp.asarray(1.0 - self._alphas)
@@ -67,22 +67,21 @@ class DenoisingDiffusionOperator(nn.Module):
             yt = yn + jnp.sqrt(self._betas[t]) * z
 
         return yt
-    
 
     def sample_ddim(self, sample_shape=(32, 32, 32, 1), n=100, **kwargs):
         init_key, rng_key = jr.split(self.make_rng("sample"))
-        timesteps = np.arange(0, self.n_diffusions, self.n_diffusions // n)        
+        timesteps = np.arange(0, self.n_diffusions, self.n_diffusions // n)
         yt = jr.normal(init_key, sample_shape)
-        for t in reversed(np.arange(1, n)):            
-            tprev, tcurr = timesteps[(t - 1):(t + 1)]
-            yt = self.denoise_ddim(jr.fold_in(rng_key, tcurr), yt, tcurr, tprev)                
+        for t in reversed(np.arange(1, n)):
+            tprev, tcurr = timesteps[(t - 1) : (t + 1)]
+            yt = self.denoise_ddim(jr.fold_in(rng_key, tcurr), yt, tcurr, tprev)
         return yt
 
-    def denoise_ddim(self, rng_key, yt, t, tprev):             
-        eps = self.score_model(
-            yt, jnp.full(yt.shape[0], t), is_training=False
-        )
-        lhs = (yt - eps * self._sqrt_1m_alphas_bar[t]) / self._sqrt_alphas_bar[t]
+    def denoise_ddim(self, rng_key, yt, t, tprev):
+        eps = self.score_model(yt, jnp.full(yt.shape[0], t), is_training=False)
+        lhs = (yt - eps * self._sqrt_1m_alphas_bar[t]) / self._sqrt_alphas_bar[
+            t
+        ]
         lhs = self._sqrt_alphas_bar[tprev] * lhs
         rhs = self._sqrt_1m_alphas_bar[tprev] * eps
         # we use the implicit version that uses sigma_t = 0.0

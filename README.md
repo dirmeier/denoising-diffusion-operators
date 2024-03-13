@@ -7,15 +7,16 @@
 
 ## About
 
-This repository implements the method proposed in [Score-based Diffusion Models in Function Space](https://arxiv.org/abs/2302.07400), i.e., 
+This repository implements the method proposed in [Score-based Diffusion Models in Function Space](https://arxiv.org/abs/2302.07400), i.e.,
 a function-space version of diffusion probabilistic models, using JAX and Flax.
 
-> [!IMPORTANT]  
-> The implementation does not strictly follow the original paper. Specifically, the U-net neural operator ([U-NO](https://arxiv.org/abs/2204.11127)) as well as the sampling are customized and simplified.
-> Our U-NO implementation just uses spectral convolutions for up- and down-sampling of input dimensions. 
-> We use the VP-parameterization of [DDPM](https://arxiv.org/abs/2006.11239); hence we don't use the score-matching loss in [NCSN](https://arxiv.org/abs/1907.05600) but a conventional SSE. 
-> We consequently don't use Langevin dynamics for sampling, but the sampling proposed in DDPM.
-> 
+> [!IMPORTANT]
+> The implementation does not strictly follow the experimental setup in the paper (since the paper itself uses a different one for each experiment).
+> Specifically, the U-net neural operator ([U-NO](https://arxiv.org/abs/2204.11127)) as well as the sampling are customized and simplified.
+> Our U-NO implementation just uses spectral convolutions for up- and down-sampling of input dimensions.
+> We use the VP-parameterization of [DDPM](https://arxiv.org/abs/2006.11239); hence we don't use the score-matching loss in [NCSN](https://arxiv.org/abs/1907.05600) but a conventional SSE loss.
+> We consequently also don't use Langevin dynamics for sampling, but the sampling proposed in [DDIM](https://arxiv.org/abs/2010.02502).
+>
 > If you find bugs, please open an issue and report them.
 
 ## Example usage
@@ -24,18 +25,20 @@ The `experiments` folder contains a use case on MNIST-SDF. For training on 32x32
 
 ```bash
 cd experiments/mnist_sdf
-python main.py --mode=train --epochs=1000
+python main.py --mode=train --model={unet/uno} --epochs=1000
 ```
+
+Pre-trained weights can be found in `experiments/mnist_sdf/checkpoints/`
+(which is also where they should be left, since the checkpoint manager looks for checkpoints in this folder).
 
 Then, in order to sample, call:
 
 ```bash
 cd experiments/mnist_sdf
-python main.py --mode=sample
+python main.py --mode=sample --model={unet/uno}
 ```
 
 This samples 32x32-, 64x64- and 128x128-dimensional images and creates some figures in `experiments/mnist_sdf/figures`.
-
 
 ## Installation
 
