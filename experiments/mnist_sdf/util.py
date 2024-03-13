@@ -10,12 +10,12 @@ import tensorflow_datasets as tfds
 import wandb
 from flax.training import orbax_utils
 from flax.training.train_state import TrainState
-from jax import numpy as jnp, random as jr
+from jax import numpy as jnp
+from jax import random as jr
 from matplotlib import pyplot as plt
+from orbax.checkpoint.utils import get_save_directory
 from scipy.ndimage import distance_transform_edt
 from tensorflow_probability.substrates import jax as tfp
-from orbax.checkpoint.utils import get_save_directory
-
 
 tfd = tfp.distributions
 
@@ -39,14 +39,16 @@ def get_nine_gaussians(num_samples):
     )
 
     y = d.sample(seed=jr.PRNGKey(12345), sample_shape=(num_samples,))
-    train_itr = tf.data.Dataset.from_tensor_slices(y[:int(num_samples * 0.9)])
+    train_itr = tf.data.Dataset.from_tensor_slices(y[: int(num_samples * 0.9)])
     train_itr = _as_batched_numpy_iter(train_itr)
-    val_itr = tf.data.Dataset.from_tensor_slices(y[int(num_samples * 0.9):])
+    val_itr = tf.data.Dataset.from_tensor_slices(y[int(num_samples * 0.9) :])
     val_itr = _as_batched_numpy_iter(val_itr)
     return train_itr, val_itr
 
 
-def get_minst_sdf_data(num_samples=None, split="train", size=32, batch_size=128):
+def get_minst_sdf_data(
+    num_samples=None, split="train", size=32, batch_size=128
+):
     def distance_transform(data):
         data[data < 0.5] = 0.0
         data[data >= 0.5] = 1.0
@@ -105,16 +107,17 @@ def get_train_state(rng_key, model, init_batch):
 def get_checkpointer_fns(model_name):
     options = orbax.checkpoint.CheckpointManagerOptions(
         max_to_keep=2,
-        save_interval_steps=1,
+        save_interval_steps=5,
         create=True,
         best_fn=lambda x: x["train_loss"],
         best_mode="min",
-        step_prefix=model_name
     )
     checkpointer = orbax.checkpoint.PyTreeCheckpointer()
     checkpoint_manager = orbax.checkpoint.CheckpointManager(
         os.path.join(
-            pathlib.Path(os.path.abspath(__file__)).parent, "checkpoints"
+            pathlib.Path(os.path.abspath(__file__)).parent,
+            "checkpoints",
+            model_name,
         ),
         checkpointer,
         options,
@@ -131,15 +134,15 @@ def get_checkpointer_fns(model_name):
 
     def path_best_ckpt_fn():
         return get_save_directory(
-            checkpoint_manager.best_step(), 
-            checkpoint_manager.directory, 
-            step_prefix=checkpoint_manager._options.step_prefix
+            checkpoint_manager.best_step(), checkpoint_manager.directory
         )
 
     return save_fn, restore_fn, path_best_ckpt_fn
 
 
-def visualize_samples(samples, suffix, model_name, n_rows=2, n_cols=5, usewand=False):
+def visualize_samples(
+    samples, suffix, model_name, n_rows=2, n_cols=5, usewand=False
+):
     path = pathlib.Path(__file__).resolve().parent / "figures"
     path.mkdir(exist_ok=True)
 
@@ -149,15 +152,18 @@ def visualize_samples(samples, suffix, model_name, n_rows=2, n_cols=5, usewand=F
     for i, ax in enumerate(axes.flatten()):
         ax.imshow(samples[i, :, :, 0])
         ax.axis("off")
-    
+
     plt.tight_layout()
     fl = f"/mnist_sdf-{model_name}-{suffix}-size_{samples.shape[1]}x{samples.shape[2]}.png"
     plt.savefig(str(path) + fl)
-    
+
     if usewand:
         samples = np.asarray(samples).transpose(0, 3, 1, 2)
         images = []
-        for idx in range(samples.shape[0]):                   
-            image = wandb.Image(samples[idx], caption=f"Dimensions: {samples.shape[2]}x{samples.shape[3]}")
+        for idx in range(samples.shape[0]):
+            image = wandb.Image(
+                samples[idx],
+                caption=f"Dimensions: {samples.shape[2]}x{samples.shape[3]}",
+            )
             images.append(image)
         wandb.log({f"synthetic_{suffix}_size_{samples.shape[2]}": images})
