@@ -61,6 +61,7 @@ class SpectralConvolution(nn.Module):
             "rhs",
             initializers.glorot_normal(dtype=jnp.complex64),
             (C, self.n_out_channels, *n_modes),
+            jnp.complex64,
         )
 
         hidden = inputs
