@@ -1,5 +1,4 @@
-import os
-import pathlib
+from typing import Any
 
 import jax
 import numpy as np
@@ -7,12 +6,10 @@ import optax
 import orbax.checkpoint
 import tensorflow as tf
 import tensorflow_datasets as tfds
-import wandb
+from absl import logging
+from flax import core, struct
 from flax.training import orbax_utils
 from flax.training.train_state import TrainState
-from jax import numpy as jnp
-from jax import random as jr
-from matplotlib import pyplot as plt
 from orbax.checkpoint.utils import get_save_directory
 from scipy.ndimage import distance_transform_edt
 from tensorflow_probability.substrates import jax as tfp
@@ -20,35 +17,29 @@ from tensorflow_probability.substrates import jax as tfp
 tfd = tfp.distributions
 
 
+class EMATrainState(TrainState):
+    ema_params: core.FrozenDict[str, Any] = struct.field(pytree_node=True)
+    batch_stats: core.FrozenDict[str, Any] = struct.field(pytree_node=True)
+
+
 def _as_batched_numpy_iter(itr, batch_size):
-    return tfds.as_numpy(itr.shuffle(2000).batch(batch_size).prefetch(500))
-
-
-def get_nine_gaussians(num_samples):
-    K = 9
-    means = jnp.array([-2.0, 0.0, 2.0])
-    means = jnp.array(jnp.meshgrid(means, means)).T.reshape(-1, 2)
-    covs = jnp.tile((1 / 16 * jnp.eye(2)), [K, 1, 1])
-
-    probs = tfd.Uniform().sample(seed=jr.PRNGKey(23), sample_shape=(K,))
-    probs = probs / jnp.sum(probs)
-
-    d = tfd.MixtureSameFamily(
-        tfd.Categorical(probs=probs),
-        tfd.MultivariateNormalFullCovariance(means, covs),
+    return tfds.as_numpy(
+        itr.shuffle(10_000)
+        .batch(batch_size, drop_remainder=True)
+        .prefetch(batch_size * 10)
     )
-
-    y = d.sample(seed=jr.PRNGKey(12345), sample_shape=(num_samples,))
-    train_itr = tf.data.Dataset.from_tensor_slices(y[: int(num_samples * 0.9)])
-    train_itr = _as_batched_numpy_iter(train_itr)
-    val_itr = tf.data.Dataset.from_tensor_slices(y[int(num_samples * 0.9) :])
-    val_itr = _as_batched_numpy_iter(val_itr)
-    return train_itr, val_itr
 
 
 def get_minst_sdf_data(
-    num_samples=None, split="train", size=32, batch_size=128
+    num_samples=None,
+    dataset_name="mnist_sdf",
+    outfolder="../../data",
+    split="train",
+    size=32,
+    batch_size=128,
 ):
+    assert dataset_name in ["mnist_sdf", "mnist"]
+
     def distance_transform(data):
         data[data < 0.5] = 0.0
         data[data >= 0.5] = 1.0
@@ -69,8 +60,8 @@ def get_minst_sdf_data(
         )
         return np.copy(data)
 
-    ds_builder = tfds.builder("mnist", try_gcs=True)
-    ds_builder.download_and_prepare(download_dir="../../data")
+    ds_builder = tfds.builder("mnist", try_gcs=False, data_dir=outfolder)
+    ds_builder.download_and_prepare(download_dir=outfolder)
     datasets = tfds.as_numpy(ds_builder.as_dataset(split=split, batch_size=-1))
 
     if isinstance(split, str):
@@ -82,43 +73,77 @@ def get_minst_sdf_data(
         if num_samples is not None:
             ds = ds[:num_samples]
         ds = resize(ds, size)
-        for i in range(ds.shape[0]):
-            ds[i] = distance_transform(ds[i]).reshape(size, size, 1)
+        if dataset_name == "mnist_sdf":
+            logging.info("using mnist_sdf data")
+            for i in range(ds.shape[0]):
+                ds[i] = distance_transform(ds[i]).reshape(size, size, 1)
+        else:
+            logging.info("using mnist data")
+            ds = 2 * (ds - 0.5)  # 2 * (x - x_min) / (x_max - x_min) - 1
+        logging.info(f"created ds of size: {ds.shape[0]}")
         itr = tf.data.Dataset.from_tensor_slices(ds)
         itr = _as_batched_numpy_iter(itr, batch_size)
         itrs.append(itr)
     return itrs
 
 
-def get_train_state(rng_key, model, init_batch):
-    params = model.init(
+def get_train_state(rng_key, model, init_batch, config):
+    variables = model.init(
         {"params": rng_key, "sample": rng_key},
         method="loss",
         y0=init_batch,
         is_training=False,
     )
-    tx = optax.chain(
-        optax.clip_by_global_norm(1.0),
-        optax.adam(0.0002),
+    if config.optimizer.do_warmup and config.optimizer.do_decay:
+        lr = optax.warmup_cosine_decay_schedule(
+            init_value=0.0,
+            peak_value=config.optimizer.learning_rate,
+            warmup_steps=config.optimizer.warmup_steps,
+            decay_steps=config.optimizer.decay_steps,
+            end_value=config.optimizer.end_learning_rate,
+        )
+    elif config.optimizer.do_warmup:
+        lr = optax.linear_schedule(
+            init_value=0.0,
+            end_value=config.optimizer.learning_rate,
+            transition_steps=config.optimizer.warmup_steps,
+        )
+    elif config.optimizer.do_decay:
+        lr = optax.cosine_decay_schedule(
+            init_value=config.optimizer.learning_rate,
+            decay_steps=config.optimizer.decay_steps,
+            alpha=config.optimizer.end_learning_rate
+            / config.optimizer.learning_rate,
+        )
+    else:
+        lr = config.optimizer.learning_rate
+
+    tx = optax.adamw(lr, weight_decay=config.optimizer.weight_decay)
+    if config.optimizer.do_gradient_clipping:
+        tx = optax.chain(
+            optax.clip_by_global_norm(config.optimizer.gradient_clipping), tx
+        )
+
+    return EMATrainState.create(
+        apply_fn=model.apply,
+        params=variables["params"],
+        ema_params=variables["params"].copy(),
+        batch_stats=variables["batch_stats"],
+        tx=tx,
     )
-    return TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
 
-def get_checkpointer_fns(model_name):
+def get_checkpointer_fns(outfolder):
     options = orbax.checkpoint.CheckpointManagerOptions(
-        max_to_keep=2,
-        save_interval_steps=5,
+        max_to_keep=5,
+        save_interval_steps=20,
         create=True,
         best_fn=lambda x: x["train_loss"],
         best_mode="min",
     )
     checkpointer = orbax.checkpoint.PyTreeCheckpointer()
     checkpoint_manager = orbax.checkpoint.CheckpointManager(
-        os.path.join(
-            pathlib.Path(os.path.abspath(__file__)).parent,
-            "checkpoints",
-            model_name,
-        ),
+        outfolder,
         checkpointer,
         options,
     )
@@ -138,32 +163,3 @@ def get_checkpointer_fns(model_name):
         )
 
     return save_fn, restore_fn, path_best_ckpt_fn
-
-
-def visualize_samples(
-    samples, suffix, model_name, n_rows=2, n_cols=5, usewand=False
-):
-    path = pathlib.Path(__file__).resolve().parent / "figures"
-    path.mkdir(exist_ok=True)
-
-    _, axes = plt.subplots(
-        figsize=(2 * n_cols, 2 * n_rows), nrows=n_rows, ncols=n_cols
-    )
-    for i, ax in enumerate(axes.flatten()):
-        ax.imshow(samples[i, :, :, 0])
-        ax.axis("off")
-
-    plt.tight_layout()
-    fl = f"/mnist_sdf-{model_name}-{suffix}-size_{samples.shape[1]}x{samples.shape[2]}.png"
-    plt.savefig(str(path) + fl)
-
-    if usewand:
-        samples = np.asarray(samples).transpose(0, 3, 1, 2)
-        images = []
-        for idx in range(samples.shape[0]):
-            image = wandb.Image(
-                samples[idx],
-                caption=f"Dimensions: {samples.shape[2]}x{samples.shape[3]}",
-            )
-            images.append(image)
-        wandb.log({f"synthetic_{suffix}_size_{samples.shape[2]}": images})

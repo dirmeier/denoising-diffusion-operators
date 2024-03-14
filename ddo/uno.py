@@ -71,10 +71,10 @@ class SpectralConvolution(nn.Module):
             (inputs.shape[0], self.n_out_channels, height, width // 2 + 1),
             dtype=jnp.complex64,
         )
-        out_ft.at[:, :, : n_modes[0], : n_modes[1]].set(
+        out_ft = out_ft.at[:, :, : n_modes[0], : n_modes[1]].set(
             self.mult(hidden_ft[:, :, : n_modes[0], : n_modes[1]], lweights)
         )
-        out_ft.at[:, :, -n_modes[0] :, : n_modes[1]].set(
+        out_ft = out_ft.at[:, :, -n_modes[0] :, : n_modes[1]].set(
             self.mult(hidden_ft[:, :, -n_modes[0] :, : n_modes[1]], rweights)
         )
 
@@ -97,7 +97,9 @@ class PointwiseForward(nn.Module):
 
     @nn.compact
     def __call__(self, inputs, height, width):
-        hidden = nn.Conv(self.n_out_channels, (1, 1))(inputs)
+        hidden = nn.Conv(
+            self.n_out_channels, (1, 1), strides=(1, 1), padding="SAME"
+        )(inputs)
         B, _, _, C = hidden.shape
         output = jax.image.resize(
             hidden, (B, height, width, C), method="bilinear"
@@ -125,7 +127,7 @@ class FourierNeuralOperator(nn.Module):
 FNO = FourierNeuralOperator
 
 
-class UNOBlock(nn.Module):
+class UNOResidualBlock(nn.Module):
     """UNet block for diffusion operator models.
 
     Does two convolutions and adds the time embedding in between. Also does
@@ -134,8 +136,7 @@ class UNOBlock(nn.Module):
 
     n_out_channels: int
     n_modes: int
-    n_groups: int = 8
-    dropout_rate: float = 0.1
+    dropout_rate: float
     down_or_up_sample: bool = False
 
     @nn.compact
@@ -146,7 +147,7 @@ class UNOBlock(nn.Module):
         hidden = inputs
 
         # convolution with pre-layer norm
-        hidden = nn.GroupNorm(self.n_groups)(hidden)
+        hidden = nn.BatchNorm()(hidden, use_running_average=not is_training)
         hidden = nn.swish(hidden)
         hidden = FNO(self.n_out_channels, self.n_modes)(hidden, height, width)
 
@@ -154,7 +155,7 @@ class UNOBlock(nn.Module):
         hidden = hidden + time_embedding[:, None, None, :]
 
         # convolution with pre-layer norm
-        hidden = nn.GroupNorm(self.n_groups)(hidden)
+        hidden = nn.BatchNorm()(hidden, use_running_average=not is_training)
         hidden = nn.swish(hidden)
         hidden = nn.Dropout(self.dropout_rate)(
             hidden, deterministic=not is_training
@@ -165,15 +166,17 @@ class UNOBlock(nn.Module):
             inputs.shape[-1] != self.n_out_channels
             and not self.down_or_up_sample
         ):
-            inputs = nn.Conv(
+            residual = nn.Conv(
                 self.n_out_channels,
-                kernel_size=(3, 3),
+                kernel_size=(1, 1),
                 strides=(1, 1),
-                padding="SAME",
+                padding="VALID",
             )(inputs)
+        else:
+            residual = inputs
         if not self.down_or_up_sample:
-            hidden = hidden + inputs
-        return hidden
+            hidden = hidden + residual
+        return hidden / 1.414213
 
 
 class UNO(nn.Module):
@@ -185,18 +188,19 @@ class UNO(nn.Module):
 
     n_blocks: int
     n_channels: int
-    dim_embedding: int
+    n_modes: int
     channel_multipliers: Sequence[int]
-    n_modes: Sequence[int]
-    n_groups: int = 8
+    dropout_rate: float
+    do_pooling_via_fno: bool
 
     def time_embedding(self, times):
-        times = _timestep_embedding(times, self.dim_embedding)
+        times = _timestep_embedding(times, self.n_channels * 2)
         times = nn.Sequential(
             [
-                nn.Dense(self.dim_embedding * 2),
+                nn.Dense(self.n_channels * 8),
                 nn.swish,
-                nn.Dense(self.dim_embedding * 2),
+                nn.Dense(self.n_channels * 8),
+                nn.swish,
             ]
         )(times)
         return times
@@ -210,84 +214,97 @@ class UNO(nn.Module):
         hidden = inputs
         # lift data
         hidden = nn.Conv(
-            self.n_channels, kernel_size=(3, 3), strides=(1, 1), padding="SAME"
+            self.n_channels, kernel_size=(1, 1), strides=(1, 1), padding="SAME"
         )(hidden)
 
         hs = []
         # left block of UNet
-        for i, (channel_mult, n_modes) in enumerate(
-            zip(self.channel_multipliers, self.n_modes)
+        for channel_mult, n_modes in zip(
+            self.channel_multipliers[:-1], self.n_modes[:-1]
         ):
             n_outchannels = channel_mult * self.n_channels
-            # do convolutions (via spectral convolution layers)
-            # increase C dimension
             for _ in range(self.n_blocks):
-                block = UNOBlock(
-                    n_out_channels=n_outchannels,
-                    n_modes=n_modes,
+                block = UNOResidualBlock(
+                    n_outchannels, n_modes, self.dropout_rate
                 )
                 hidden = block(
                     hidden, times, hidden.shape[1], hidden.shape[2], is_training
                 )
-            hs.append(hidden)
-            # do pooling (via spectral convolutions too)
-            block = UNOBlock(
-                n_out_channels=n_outchannels,
-                n_modes=n_modes,
-                down_or_up_sample=True,
-            )
-            hidden = block(
-                hidden,
-                times,
-                hidden.shape[1] // 2,
-                hidden.shape[2] // 2,
-                is_training,
-            )
+                hs.append(hidden)
+            if not self.do_pooling_via_fno:
+                hidden = nn.avg_pool(
+                    hidden, window_shape=(2, 2), strides=(2, 2)
+                )
+            else:
+                # do pooling (via spectral convolutions too)
+                block = UNOResidualBlock(
+                    n_outchannels,
+                    n_modes // 2,
+                    self.dropout_rate,
+                    down_or_up_sample=True,
+                )
+                hidden = block(
+                    hidden,
+                    times,
+                    hidden.shape[1] // 2,
+                    hidden.shape[2] // 2,
+                    is_training,
+                )
 
         # middle block of UNet
         for _ in range(self.n_blocks):
-            block = UNOBlock(
-                n_out_channels=hidden.shape[-1], n_modes=self.n_modes[-1]
+            block = UNOResidualBlock(
+                hidden.shape[-1], self.n_modes[-1], self.dropout_rate
             )
             hidden = block(
                 hidden, times, hidden.shape[1], hidden.shape[2], is_training
             )
-        hs.append(hidden)
 
-        hidden = hs.pop()
-        # right block of UNet
-        for i, (channel_mult, n_modes) in enumerate(
-            zip(reversed(self.channel_multipliers), reversed(self.n_modes))
+        for channel_mult, n_modes in zip(
+            reversed(self.channel_multipliers[:-1]), reversed(self.n_modes[:-1])
         ):
             n_outchannels = channel_mult * self.n_channels
-            # do convolutions (via spectral convolution layers)
-            # increase H and W dimensions
-            block = UNOBlock(
-                n_out_channels=n_outchannels,
-                n_modes=n_modes,
-                down_or_up_sample=True,
-            )
-            hidden = block(
-                hidden,
-                times,
-                hidden.shape[1] * 2,
-                hidden.shape[2] * 2,
-                is_training,
-            )
-            # do convolutions (via spectral convolution layers)
-            # reduce C dimensions and does residual computations
-            for bl in range(self.n_blocks):
-                hidden = (
-                    jnp.concatenate([hidden, hs.pop()], axis=-1)
-                    if bl == 0
-                    else hidden
+            if not self.do_pooling_via_fno:
+                hidden = jax.image.resize(
+                    hidden,
+                    (
+                        B,
+                        hidden.shape[1] * 2,
+                        hidden.shape[2] * 2,
+                        hidden.shape[3],
+                    ),
+                    method="bilinear",
                 )
-                block = UNOBlock(n_out_channels=n_outchannels, n_modes=n_modes)
+            else:
+                block = UNOResidualBlock(
+                    n_outchannels,
+                    n_modes // 2,
+                    self.dropout_rate,
+                    down_or_up_sample=True,
+                )
+                hidden = block(
+                    hidden,
+                    times,
+                    hidden.shape[1] * 2,
+                    hidden.shape[2] * 2,
+                    is_training,
+                )
+            for _ in range(self.n_blocks):
+                block = UNOResidualBlock(
+                    n_outchannels, n_modes, self.dropout_rate
+                )
+                hidden = jnp.concatenate([hidden, hs.pop()], axis=-1)
                 hidden = block(
                     hidden, times, hidden.shape[1], hidden.shape[2], is_training
                 )
 
-        hidden = nn.GroupNorm(self.n_groups)(hidden)
+        hidden = nn.BatchNorm()(hidden, use_running_average=not is_training)
         hidden = nn.swish(hidden)
-        outputs = nn.Conv(C, kernel_size=(1, 1))(hidden)
+        outputs = nn.Conv(
+            C,
+            kernel_size=(1, 1),
+            strides=(1, 1),
+            padding="SAME",
+            kernel_init=nn.initializers.zeros,
+        )(hidden)
         return outputs

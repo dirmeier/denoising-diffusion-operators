@@ -7,7 +7,7 @@
 
 ## About
 
-This repository implements the method proposed in [Score-based Diffusion Models in Function Space](https://arxiv.org/abs/2302.07400), i.e.,
+This repository implements the method, denoising diffusion operator (DDO), proposed in [Score-based Diffusion Models in Function Space](https://arxiv.org/abs/2302.07400), i.e.,
 a function-space version of diffusion probabilistic models, using JAX and Flax.
 
 > [!IMPORTANT]
@@ -25,20 +25,44 @@ The `experiments` folder contains a use case on MNIST-SDF. For training on 32x32
 
 ```bash
 cd experiments/mnist_sdf
-python main.py --mode=train --model={unet/uno} --epochs=1000
+python main.py \
+  --config=config.py \
+  --mode=train \
+  --model=<uno|unet> \
+  --dataset=mnist_sdf \
+  --workdir=<dir>
 ```
 
-Pre-trained weights can be found in `experiments/mnist_sdf/checkpoints/`
-(which is also where they should be left, since the checkpoint manager looks for checkpoints in this folder).
-
-Then, in order to sample, call:
+Then, sample images viaL
 
 ```bash
 cd experiments/mnist_sdf
-python main.py --mode=sample --model={unet/uno}
+python main.py \
+  --config=config.py \
+  --mode=sample \
+  --model=<uno|unet> \
+  --dataset=mnist_sdf \
+  --workdir=<dir>
 ```
 
-This samples 32x32-, 64x64- and 128x128-dimensional images and creates some figures in `experiments/mnist_sdf/figures`.
+
+Below are DDIM-sampled images from the DDO when either a UNet or a UNO is used as score model (a DDO with a UNet is just a DDPM). The UNet parameterization yields high-quality results already after
+20 epochs or so. The UNO works worse, but fine, than the UNet when 32x32-dimensional images are sampled. When sampling 64x64-dimensional images it mainly produces noise
+
+<div align="center">
+  <div>UNet 32x32</div>
+  <img src="fig/mnist_sdf-unet-32x32.png" width="750">
+</div>
+
+<div align="center">
+  <div>UNO 32x32</div>
+  <img src="fig/mnist_sdf-uno-32x32.png" width="750">
+</div>
+
+<div  align="center">
+  <div>UNO 64x64</div>
+  <img src="fig/mnist_sdf-uno-64x64.png" width="750">
+</div>
 
 ## Installation
 
