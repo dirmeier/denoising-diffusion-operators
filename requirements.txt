@@ -1,5 +1,6 @@
 flax
 matplotlib
+ml_collections
 tensorflow
 tensorflow-datasets
 tfp-nightly[jax]
