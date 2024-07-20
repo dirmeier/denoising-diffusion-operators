@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools", "setuptools-scm", "dynamic-versioning"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling", "hatch-requirements-txt"]
+build-backend = "hatchling.build"
 
 [project]
 name =  "ddo"
@@ -17,12 +17,14 @@ classifiers = [
 requires-python = ">=3.9"
 dynamic = ["version", "dependencies"]
 
-[tool.setuptools]
+[tool.hatch.build.targets.wheel]
 packages = ["ddo"]
 
-[tool.setuptools.dynamic]
-version = {attr = "ddo.__init__.__version__"}
-dependencies = {file = ["requirements.txt"]}
+[tool.hatch.metadata.hooks.requirements_txt]
+files = ["requirements.txt"]
+
+[tool.hatch.version]
+path = "ddo/__init__.py"
 
 [tool.bandit]
 skips = ["B101"]
