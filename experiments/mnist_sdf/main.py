@@ -6,15 +6,12 @@ import numpy as np
 import optax
 import wandb
 from absl import app, flags, logging
+from checkpointer import get_checkpointer_fns, new_train_state
+from dataloader import get_data_loaders
 from flax.training.early_stopping import EarlyStopping
 from jax import numpy as jnp
 from jax import random as jr
 from ml_collections import config_flags
-from util import (
-    get_checkpointer_fns,
-    get_minst_sdf_data,
-    get_train_state,
-)
 
 import ddo
 from ddo import (
@@ -135,7 +132,7 @@ def train(rng_key, train_iter, val_iter, model_id, run=None):
     state_key, rng_key = jr.split(rng_key)
 
     model = get_model(FLAGS.model, get_config())
-    state = get_train_state(
+    state = new_train_state(
         state_key, model, next(iter(train_iter)), FLAGS.config.training
     )
     ckpt_save_fn, ckpt_restore_fn, _ = get_checkpointer_fns(
@@ -262,7 +259,7 @@ def main(argv):
     ## train model
     rng_key = jr.PRNGKey(FLAGS.config.rng_key)
     if FLAGS.mode == "train":
-        train_iter, val_iter = get_minst_sdf_data(
+        train_iter, val_iter = get_data_loaders(
             dataset_name=FLAGS.dataset,
             split=["train", "test[:1000]"],
             outfolder=os.path.join(FLAGS.workdir, "data"),

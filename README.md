@@ -50,17 +50,17 @@ Below are DDIM-sampled images from the DDO when either a UNet or a UNO is used a
 
 <div align="center">
   <div>UNet 32x32</div>
-  <img src="fig/mnist_sdf-unet-32x32.png" width="750">
+  <img src="experiments/mnist_sdf/figures/mnist_sdf-unet-32x32.png" width="750">
 </div>
 
 <div align="center">
   <div>UNO 32x32</div>
-  <img src="fig/mnist_sdf-uno-32x32.png" width="750">
+  <img src="experiments/mnist_sdf/figures/mnist_sdf-uno-32x32.png" width="750">
 </div>
 
 <div  align="center">
   <div>UNO 64x64</div>
-  <img src="fig/mnist_sdf-uno-64x64.png" width="750">
+  <img src="experiments/mnist_sdf/figures/mnist_sdf-uno-64x64.png" width="750">
 </div>
 
 ## Installation

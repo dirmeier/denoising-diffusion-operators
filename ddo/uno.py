@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-from typing import Union
 
 import jax
 from flax import linen as nn
@@ -35,7 +34,7 @@ class SpectralConvolution(nn.Module):
     """
 
     n_out_channels: int
-    n_modes: Union[int, tuple[int]]
+    n_modes: int | tuple[int]
 
     @staticmethod
     def mult(lhs, rhs):
