@@ -1,9 +1,6 @@
 # Denoising diffusion operators
 
-[![status](http://www.repostatus.org/badges/latest/concept.svg)](http://www.repostatus.org/#concept)
 [![ci](https://github.com/dirmeier/denoising-diffusion-operators/actions/workflows/ci.yaml/badge.svg)](https://github.com/dirmeier/denoising-diffusion-operators/actions/workflows/ci.yaml)
-
-> Implementation of 'Score-based Diffusion Models in Function Space'
 
 ## About
 
@@ -21,7 +18,15 @@ a function-space version of diffusion probabilistic models, using JAX and Flax.
 
 ## Example usage
 
-The `experiments` folder contains a use case on MNIST-SDF. For training on 32x32-dimensional images from the MNIST-SDF dataset, call:
+The `experiments` folder contains a use case on MNIST-SDF. First download the repo and
+install all dependencies using:
+
+```bash
+wget -qO- https://github.com/dirmeier/denoising-diffusion-operators/archive/refs/tags/<TAG>>.tar.gz | tar zxvf -
+uv sync --all-groups
+```
+
+For training on 32x32-dimensional images from the MNIST-SDF dataset, call:
 
 ```bash
 cd experiments/mnist_sdf
@@ -73,4 +78,4 @@ pip install git+https://github.com/dirmeier/ddo@<TAG>
 
 ## Author
 
-Simon Dirmeier <a href="mailto:sfyrbnd @ pm me">sfyrbnd @ pm me</a>
+Simon Dirmeier <a href="mailto:simd23@pm.me">simd23 @ pm dot me</a>
